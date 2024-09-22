@@ -5,7 +5,7 @@ Developing a school recommender system involves matching students with suitable 
 1.  **AI-Based Approach**: Utilizing OpenAI's GPT models to interpret user inputs and generate recommendations.
 2.  **Non-AI Approach**: Using traditional programming logic and explicit algorithms to process inputs and produce recommendations.
 
-Below is a concise and intuitive comparison of these approaches, including their methods, technologies, advantages, and disadvantages---especially focusing on the AI approach's potential issues like hallucinations, token limits, and the need for Retrieval-Augmented Generation (RAG) or fine-tuning.
+Below is a concise and intuitive comparison of these approaches, including their methods, technologies, advantages, and disadvantages
 
 * * * * *
 
