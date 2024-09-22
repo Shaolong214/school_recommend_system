@@ -40,7 +40,7 @@ Below is a concise and intuitive comparison of these approaches, including their
 **AI-Based Approach**
 
 -   **Technologies**:
-    -   **OpenAI GPT Models**: Leverages GPT-3.5 or GPT-4 via the OpenAI API.
+    -   **OpenAI GPT Models**: Leverages GPT-3.5 turbo via the OpenAI API.
     -   **Python & Pandas**: For data handling and preprocessing.
 -   **Process**:
     -   **Data Loading**: Schools data loaded into a DataFrame.
@@ -50,7 +50,7 @@ Below is a concise and intuitive comparison of these approaches, including their
     -   **Flexibility**: Can interpret and correct user inputs with typos or in different languages.
     -   **Nuanced Understanding**: Provides sophisticated recommendations by understanding context.
 -   **Disadvantages**:
-    -   **Hallucinations** (*幻觉*): The AI may generate plausible but incorrect or irrelevant information.
+    -   **Hallucinations**: The AI may generate plausible but incorrect or irrelevant information.
     -   **Token Limits**: Restrictions on input/output size may limit the amount of data processed.
     -   **Need for RAG or Fine-Tuning**: To enhance accuracy, integrating Retrieval-Augmented Generation or fine-tuning the model may be necessary, adding complexity.
 
