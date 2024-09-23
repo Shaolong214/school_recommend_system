@@ -3,16 +3,23 @@ from openai import OpenAI
 
 client = OpenAI(api_key='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')
 
-# Load and preprocess data
+# Constants
+MAX_SCHOOLS = 20  # Maximum number of schools to send to the API
+MAX_CRITERION_SCORE = 100  # Maximum score for any criterion
+SMALL_SCHOOL_MAX_SIZE = 500  # Max students for a small school
+MEDIUM_SCHOOL_MAX_SIZE = 1000  # Max students for a medium school
+
+# Initialize OpenAI API
 def load_and_preprocess_data(file_path):
     df = pd.read_csv(file_path)
 
-    # Data cleaning: Drop rows with missing values in critical columns
-    df = df.dropna(subset=['Suburb', 'ATAR Rank', 'Low Year', 'High Year', 'Classification Group'])
+    # Drop rows with missing critical values
+    df = df.dropna(subset=[
+        'School Name', 'Suburb', 'Median ATAR', 'Low Year', 'High Year',
+        'Classification Group', 'Total Students'
+    ])
 
-    # Convert numeric columns to correct data types
-    df['ATAR Rank'] = pd.to_numeric(df['ATAR Rank'], errors='coerce')
-    df['ICSEA'] = pd.to_numeric(df['ICSEA'], errors='coerce')
+    # Convert numerical columns
     df['Median ATAR'] = pd.to_numeric(df['Median ATAR'], errors='coerce')
     df['Total Students'] = pd.to_numeric(df['Total Students'], errors='coerce')
 
@@ -25,97 +32,146 @@ def load_and_preprocess_data(file_path):
     df['Low Year Numeric'] = df['Low Year'].map(grade_mapping)
     df['High Year Numeric'] = df['High Year'].map(grade_mapping)
 
-    # Create a summary for each school
+    # Categorize school size
+    def categorize_school_size(total_students):
+        if total_students < SMALL_SCHOOL_MAX_SIZE:
+            return 'SMALL'
+        elif total_students <= MEDIUM_SCHOOL_MAX_SIZE:
+            return 'MEDIUM'
+        else:
+            return 'LARGE'
+    df['School Size'] = df['Total Students'].apply(categorize_school_size)
+
+    # Create a summary description for each school
     df['Summary'] = df.apply(lambda row: (
         f"School Name: {row['School Name']}, Suburb: {row['Suburb']}, "
-        f"Type: {row['Classification Group']}, ATAR Rank: {row['ATAR Rank']}, "
-        f"Median ATAR: {row['Median ATAR']}, ICSEA: {row['ICSEA']}, "
-        f"Total Students: {row['Total Students']}, "
+        f"Classification Group: {row['Classification Group']}, Median ATAR: {row['Median ATAR']}, "
+        f"Total Students: {row['Total Students']}, School Size: {row['School Size']}, "
         f"Grades: {row['Low Year']} to {row['High Year']}"
     ), axis=1)
 
     return df
 
-# Define a function to get recommendations using the OpenAI API
-def get_recommendations(student_info, school_summaries):
-    # Create the prompt with the student's preferences and the school list
+def get_recommendations(student_info, weights, school_summaries):
+    # Create the prompt for OpenAI API
     prompt = f"""
-Based on the student's preferences and the following list of schools, recommend the top 5 schools that best match the student's needs. The student inputs may contain typos or be in different languages. Please interpret them as accurately as possible. Provide a brief explanation for each recommendation.
+Based on the student's preferences and the following list of schools, recommend the top 5 schools that best meet the student's needs. Score and rank the schools according to the weights provided for each criterion.
 
-Student Preferences (interpret the inputs even if they contain typos or are in different languages):
+Student preferences (interpret accurately even with typos or different languages):
 - Suburb: {student_info['Suburb']}
 - Grade: {student_info['Grade']}
 - Preferred School Type: {student_info['Preferred School Type']}
-- Academic Expectation (ATAR Rank): {student_info['Academic Expectation']}
-- Preferred Education Region: {student_info.get('Preferred Education Region', 'No preference')}
+- Academic Expectation (Median ATAR): {student_info['Academic Expectation']}
 - Preferred School Size: {student_info.get('Preferred School Size', 'No preference')}
 
+Weights assigned by the student to the following criteria (total must sum to 1):
+- Location Weight: {weights['location_weight']}
+- Academic Performance Weight: {weights['academic_weight']}
+- School Type Weight: {weights['type_weight']}
+- School Size Weight: {weights['size_weight']}
 
-School List:
+Scoring criteria and rules:
+
+1. **Location**:
+   - If the school's Suburb matches the student's Suburb, score is {MAX_CRITERION_SCORE}, else 0.
+
+2. **Academic Performance**:
+   - Score is (Median ATAR / 100) * {MAX_CRITERION_SCORE}.
+   - Exclude schools with Median ATAR below the student's expectation.
+
+3. **School Type**:
+   - If Classification Group matches Preferred School Type, score is {MAX_CRITERION_SCORE}, else 0.
+
+4. **School Size**:
+   - Sizes:
+     - SMALL: Total Students < {SMALL_SCHOOL_MAX_SIZE}
+     - MEDIUM: {SMALL_SCHOOL_MAX_SIZE} <= Total Students <= {MEDIUM_SCHOOL_MAX_SIZE}
+     - LARGE: Total Students > {MEDIUM_SCHOOL_MAX_SIZE}
+   - If size matches Preferred School Size, score is {MAX_CRITERION_SCORE}, else 0.
+
+5. **Grade**:
+   - School must offer the student's Grade; otherwise, exclude the school.
+
+**Total Score Calculation**:
+Total Score = (Location Score * {weights['location_weight']}) + (Academic Score * {weights['academic_weight']}) + (Type Score * {weights['type_weight']}) + (Size Score * {weights['size_weight']})
+
+Score each school based on these rules and recommend the top 5 schools with the highest scores. Provide a brief explanation for each recommendation.
+
+School list:
 """
-    # Add school summaries to the prompt
+    # Append school summaries to the prompt
     for summary in school_summaries:
         prompt += f"- {summary}\n"
 
     prompt += "\nRecommendations:"
 
-    # Call the OpenAI API using the ChatCompletion interface
-    response = client.chat.completions.create(model='gpt-3.5-turbo',  # Use 'gpt-4' if you have access
+    # Call the OpenAI API
+    response = client.chat.completions.create(model='gpt-3.5-turbo',
     messages=[
-        {"role": "system", "content": "You are an assistant that helps students find the best schools based on their preferences. The student's inputs may contain typos or be in different languages; please interpret them to the best of your ability."},
+        {"role": "system", "content": "You are an assistant helping a student find the most suitable schools based on their preferences. Please score and recommend schools according to the student's criteria and weights."},
         {"role": "user", "content": prompt}
     ],
     max_tokens=1500,
     temperature=0.7)
 
-    # Extract the generated recommendations
+    # Extract recommendations
     recommendations = response.choices[0].message.content.strip()
     return recommendations
 
-# Main function
 def main():
-    # Load and preprocess the data
-    df = load_and_preprocess_data('wa_secondary_schools.csv')  # Ensure the CSV file is in the current directory
+    # Load and preprocess data
+    df = load_and_preprocess_data('wa_secondary_schools.csv')
 
     # Collect user input
     student_info = {}
-    student_info['Suburb'] = input("Please enter your residential suburb: ").strip()
-    student_info['Grade'] = input("Please enter your current grade (e.g., Y10): ").strip()
-    student_info['Preferred School Type'] = input("Please enter your preferred school type (GOVERNMENT or NON-GOVERNMENT): ").strip()
-    student_info['Academic Expectation'] = input("Please enter your academic expectation (ATAR Rank, 0-100): ").strip()
-    student_info['Preferred Education Region'] = input("Please enter your preferred education region (or press Enter to skip): ").strip()
-    student_info['Preferred School Size'] = input("Please enter your preferred school size (Small, Medium, Large, or press Enter to skip): ").strip()
+    student_info['Suburb'] = input("Please enter your residential suburb: ").strip().upper()
+    student_info['Grade'] = input("Please enter your current grade (e.g., Y10): ").strip().upper()
+    student_info['Preferred School Type'] = input("Please enter your preferred school type (GOVERNMENT, NON-GOVERNMENT, SECONDARY SCHOOLS, DISTRICT HIGH SCHOOLS, K-12 SCHOOLS): ").strip().upper()
+    student_info['Academic Expectation'] = input("Please enter your minimum acceptable Median ATAR (0-100): ").strip()
+    student_info['Preferred School Size'] = input("Please enter your preferred school size (SMALL, MEDIUM, LARGE): ").strip().upper()
 
-    # Pass the raw inputs to the AI and let it interpret them
-    # For numeric fields, attempt to convert them; if it fails, pass as-is
+    # Convert Academic Expectation to float if possible
     try:
         student_info['Academic Expectation'] = float(student_info['Academic Expectation'])
     except ValueError:
-        # If conversion fails, pass as-is
-        pass
+        pass  # Keep original input if conversion fails
 
-    # Filter the school list based on basic criteria to reduce data size
-    df_filtered = df.copy()
+    # Collect weights for each criterion
+    print("Please assign weights to the following criteria. The total must sum to 1.")
+    weights = {}
+    weights['location_weight'] = float(input("Weight for location (0-1): ").strip())
+    weights['academic_weight'] = float(input("Weight for academic performance (0-1): ").strip())
+    weights['type_weight'] = float(input("Weight for school type (0-1): ").strip())
+    weights['size_weight'] = float(input("Weight for school size (0-1): ").strip())
 
-    # Control the number of schools sent to the API (to avoid token limits)
-    max_schools = 20  # Adjust as needed (considering token limits)
-    if len(df_filtered) > max_schools:
-        df_filtered = df_filtered.sample(max_schools)
+    # Ensure total weight sums to 1
+    total_weight = sum(weights.values())
+    if total_weight != 1.0:
+        # Normalize weights
+        weights = {k: v / total_weight for k, v in weights.items()}
 
-    # Get the list of school summaries
+    # Limit the number of schools sent to the API
+    if len(df) > MAX_SCHOOLS:
+        df_filtered = df.sample(MAX_SCHOOLS)
+    else:
+        df_filtered = df.copy()
+
+    # Get school summaries
     school_summaries = df_filtered['Summary'].tolist()
 
-    # Check if there are any schools after filtering
+    # Check if any schools are available
     if not school_summaries:
-        print("Sorry, no schools are available to recommend.")
+        print("Sorry, there are no schools available for recommendation.")
         return
 
-    # Get recommendations from the OpenAI API
-    recommendations = get_recommendations(student_info, school_summaries)
+    # Get recommendations
+    recommendations = get_recommendations(student_info, weights, school_summaries)
 
-    # Output the recommendations
+    # Output recommendations
     print("\nRecommended Schools:")
     print(recommendations)
 
 if __name__ == "__main__":
     main()
+
+
