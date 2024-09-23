@@ -1,7 +1,15 @@
 import pandas as pd
 from openai import OpenAI
+import os
+from dotenv import load_dotenv
 
-client = OpenAI(api_key='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')
+
+load_dotenv()
+api_key = os.getenv('OPENAI_API_KEY')
+client = OpenAI(api_key=api_key)
+
+
+# client = OpenAI(api_key='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')
 
 # Constants
 MAX_SCHOOLS = 20  # Maximum number of schools to send to the API
